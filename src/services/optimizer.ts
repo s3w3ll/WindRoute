@@ -18,8 +18,11 @@ function scoreOneDeparture(
 
   let weightedHeadwind = 0
   let totalRain = 0
-  const observations: string[] = []
   let distanceSoFar = 0
+
+  // Track first-half vs second-half headwind for "earlier/later" observations
+  let firstHalfHw = 0, secondHalfHw = 0
+  let firstHalfDist = 0, secondHalfDist = 0
 
   for (const segment of route.segments) {
     const segFrac = segment.distanceMetres / totalDistance
@@ -30,15 +33,41 @@ function scoreOneDeparture(
     const hw = headwindComponent(segment.bearing, weather.windFromDeg, weather.windSpeedKmh)
     weightedHeadwind += hw * segFrac
     totalRain += weather.precipitationMm * segFrac
-    distanceSoFar += segment.distanceMetres
 
-    // Tailwind observation
-    if (hw < -3) {
-      observations.push(`Favourable tailwind on this segment (${weather.windSpeedKmh.toFixed(0)} km/h behind you)`)
+    if (segMidFrac < 0.5) {
+      firstHalfHw += hw * segFrac
+      firstHalfDist += segment.distanceMetres
+    } else {
+      secondHalfHw += hw * segFrac
+      secondHalfDist += segment.distanceMetres
     }
+
+    distanceSoFar += segment.distanceMetres
   }
 
-  return { headwindScore: weightedHeadwind, rainScore: totalRain, observations: [...new Set(observations)] }
+  const observations: string[] = []
+
+  // First-half vs second-half comparison (normalised by distance fraction)
+  const firstFrac = firstHalfDist / totalDistance
+  const secondFrac = secondHalfDist / totalDistance
+  const firstAvg = firstFrac > 0 ? firstHalfHw / firstFrac : 0
+  const secondAvg = secondFrac > 0 ? secondHalfHw / secondFrac : 0
+
+  if (firstAvg < -3 && Math.abs(secondAvg) <= 3) {
+    observations.push('Favourable tailwind early in the ride, neutral conditions later')
+  } else if (Math.abs(firstAvg) <= 3 && secondAvg < -3) {
+    observations.push('Neutral conditions early, favourable tailwind later in the ride')
+  } else if (firstAvg < -3 && secondAvg < -3) {
+    observations.push('Tailwind throughout the entire ride')
+  } else if (firstAvg > 5 && secondAvg > 5) {
+    observations.push('Headwind throughout — consider whether an earlier or later window is better')
+  }
+
+  if (totalRain > 0.5) {
+    observations.push(`Expect ${totalRain.toFixed(1)} mm of rain during the ride`)
+  }
+
+  return { headwindScore: weightedHeadwind, rainScore: totalRain, observations }
 }
 
 /**
