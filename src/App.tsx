@@ -14,6 +14,7 @@ import type { Route, WeatherSlot, DepartureScore, Priority, LatLng } from './typ
 export default function App() {
   const [route, setRoute] = useState<Route | null>(null)
   const [weatherSlots, setWeatherSlots] = useState<WeatherSlot[]>([])
+  const [arriveBy, setArriveBy] = useState<Date | null>(null)
   const [scores, setScores] = useState<DepartureScore[]>([])
   const [best, setBest] = useState<DepartureScore | null>(null)
   const [priority, setPriority] = useState<Priority>('wind')
@@ -25,20 +26,15 @@ export default function App() {
   const [latest, setLatest] = useState<Date | null>(null)
   const [sliderTime, setSliderTime] = useState<Date | null>(null)
   const [mapInstance, setMapInstance] = useState<L.Map | null>(null)
-  const [currentRoute, setCurrentRoute] = useState<Route | null>(null)
-  const [currentSlots, setCurrentSlots] = useState<WeatherSlot[]>([])
-  const [currentEarliest, setCurrentEarliest] = useState<Date | null>(null)
-  const [currentLatest, setCurrentLatest] = useState<Date | null>(null)
 
   const handlePriorityChange = useCallback((newPriority: Priority) => {
     setPriority(newPriority)
-    if (!currentRoute || !currentSlots.length || !currentEarliest || !currentLatest) return
-    const arriveBy = new Date(currentLatest.getTime() + (currentRoute.durationMinutes * 60 * 1000))
-    const newScores = scoreDepartures(currentRoute, currentSlots, currentEarliest, arriveBy, newPriority)
-    const newBest = newScores.reduce((b, s) => (s.combinedScore < b.combinedScore ? s : b))
+    if (!route || !weatherSlots.length || !earliest || !arriveBy) return
+    const newScores = scoreDepartures(route, weatherSlots, earliest, arriveBy, newPriority)
+    const newBest = findBestDeparture(route, weatherSlots, earliest, arriveBy, newPriority)
     setScores(newScores)
     setBest(newBest)
-  }, [currentRoute, currentSlots, currentEarliest, currentLatest])
+  }, [route, weatherSlots, earliest, arriveBy])
 
   const handleSubmit = useCallback(async (form: RouteFormValues) => {
     setLoading(true)
@@ -53,15 +49,12 @@ export default function App() {
 
       const fetchedRoute = await fetchRoute(originLatLng, destLatLng)
       setRoute(fetchedRoute)
-      setCurrentRoute(fetchedRoute)
 
-      // Use route midpoint for weather fetch
       const midIdx = Math.floor(fetchedRoute.polyline.length / 2)
       const midpoint = fetchedRoute.polyline[midIdx]
 
       const slots = await fetchWeather(midpoint, form.date, form.date)
       setWeatherSlots(slots)
-      setCurrentSlots(slots)
 
       const earliestDate = new Date(`${form.date}T${form.earliestLeaveTime}`)
       const arriveByDate = new Date(`${form.date}T${form.arriveByTime}`)
@@ -69,8 +62,7 @@ export default function App() {
 
       setEarliest(earliestDate)
       setLatest(latestDate)
-      setCurrentEarliest(earliestDate)
-      setCurrentLatest(latestDate)
+      setArriveBy(arriveByDate)
       setSliderTime(earliestDate)
 
       const newScores = scoreDepartures(fetchedRoute, slots, earliestDate, arriveByDate, priority)
@@ -86,7 +78,6 @@ export default function App() {
 
   return (
     <div className="h-screen w-screen flex overflow-hidden">
-      {/* Sidebar */}
       <div className="w-80 flex-shrink-0 flex flex-col gap-3 p-3 overflow-y-auto bg-gray-50 z-10 shadow-lg">
         <RouteInput onSubmit={handleSubmit} loading={loading} />
         <PriorityToggle value={priority} onChange={handlePriorityChange} />
@@ -116,7 +107,6 @@ export default function App() {
         )}
       </div>
 
-      {/* Map */}
       <div className="flex-1 relative">
         <MapView
           route={route}

@@ -56,9 +56,14 @@ export function interpolateWeather(slots: WeatherSlot[], at: Date): WeatherAtTim
   const frac = (atMs - t0) / (t1 - t0)
   const s0 = slots[i], s1 = slots[i + 1]
 
+  // Handle circular interpolation for wind direction (avoids 350→10 going via 180)
+  let dDeg = s1.windFromDeg - s0.windFromDeg
+  if (dDeg > 180) dDeg -= 360
+  if (dDeg < -180) dDeg += 360
+
   return {
     windSpeedKmh: s0.windSpeedKmh + frac * (s1.windSpeedKmh - s0.windSpeedKmh),
-    windFromDeg: s0.windFromDeg + frac * (s1.windFromDeg - s0.windFromDeg),
+    windFromDeg: (s0.windFromDeg + frac * dDeg + 360) % 360,
     precipitationMm: s0.precipitationMm + frac * (s1.precipitationMm - s0.precipitationMm),
   }
 }
