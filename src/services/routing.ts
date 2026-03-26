@@ -2,8 +2,7 @@ import type { LatLng, Route, RouteSegment } from '../types'
 import { calcBearing } from '../utils/bearing'
 
 const NOMINATIM = 'https://nominatim.openstreetmap.org'
-// Valhalla public instance — proper bicycle routing, no API key required
-const VALHALLA = 'https://valhalla.openstreetmap.de'
+const ORS = 'https://api.openrouteservice.org/v2/directions/cycling-regular'
 
 /** Convert address string to lat/lng via Nominatim */
 export async function geocode(address: string): Promise<LatLng> {
@@ -15,11 +14,8 @@ export async function geocode(address: string): Promise<LatLng> {
   return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) }
 }
 
-/**
- * Decode Valhalla's encoded polyline.
- * Valhalla uses 6-decimal precision (1e6) unlike Google's 5-decimal (1e5).
- */
-function decodePolyline6(encoded: string): LatLng[] {
+/** Decode standard Google/ORS encoded polyline (5-decimal precision) */
+function decodePolyline(encoded: string): LatLng[] {
   const coords: LatLng[] = []
   let index = 0, lat = 0, lng = 0
 
@@ -40,39 +36,41 @@ function decodePolyline6(encoded: string): LatLng[] {
     } while (b >= 0x20)
     lng += result & 1 ? ~(result >> 1) : result >> 1
 
-    coords.push({ lat: lat / 1e6, lng: lng / 1e6 })
+    coords.push({ lat: lat / 1e5, lng: lng / 1e5 })
   }
   return coords
 }
 
-/** Fetch a bike route from Valhalla and return decoded segments */
+/** Fetch a bike route from OpenRouteService and return decoded segments */
 export async function fetchRoute(origin: LatLng, destination: LatLng): Promise<Route> {
-  const body = {
-    locations: [
-      { lon: origin.lng, lat: origin.lat },
-      { lon: destination.lng, lat: destination.lat },
-    ],
-    costing: 'bicycle',
-    costing_options: {
-      bicycle: { bicycle_type: 'hybrid', use_roads: 0.5, use_hills: 0.3 },
-    },
-  }
+  const apiKey = import.meta.env.VITE_ORS_API_KEY as string | undefined
+  if (!apiKey) throw new Error('No routing API key — add VITE_ORS_API_KEY to your .env file (get a free key at openrouteservice.org)')
 
-  const res = await fetch(`${VALHALLA}/route`, {
+  const res = await fetch(ORS, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': apiKey,
+    },
+    body: JSON.stringify({
+      coordinates: [
+        [origin.lng, origin.lat],
+        [destination.lng, destination.lat],
+      ],
+    }),
   })
+
   if (!res.ok) {
     const msg = await res.text().catch(() => res.statusText)
     throw new Error(`Routing failed: ${msg}`)
   }
-  const data = await res.json()
-  if (!data.trip?.legs?.[0]) throw new Error('No route found')
 
-  const leg = data.trip.legs[0]
-  const polyline = decodePolyline6(leg.shape)
-  const durationMinutes = data.trip.summary.time / 60
+  const data = await res.json()
+  const route = data.routes?.[0]
+  if (!route) throw new Error('No route found')
+
+  const polyline = decodePolyline(route.geometry)
+  const durationMinutes = route.summary.duration / 60
 
   const segments: RouteSegment[] = []
   for (let i = 0; i < polyline.length - 1; i++) {
