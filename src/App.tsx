@@ -1,3 +1,133 @@
+import { useState, useCallback } from 'react'
+import L from 'leaflet'
+import MapView from './components/MapView'
+import RouteInput, { type RouteFormValues } from './components/RouteInput'
+import WindOverlay from './components/WindOverlay'
+import TimeSlider from './components/TimeSlider'
+import RecommendationPanel from './components/RecommendationPanel'
+import PriorityToggle from './components/PriorityToggle'
+import { geocode, fetchRoute } from './services/routing'
+import { fetchWeather } from './services/weather'
+import { scoreDepartures, findBestDeparture } from './services/optimizer'
+import type { Route, WeatherSlot, DepartureScore, Priority, LatLng } from './types'
+
 export default function App() {
-  return <div className="h-screen w-screen bg-gray-100 flex items-center justify-center">WindRoute loading…</div>
+  const [route, setRoute] = useState<Route | null>(null)
+  const [weatherSlots, setWeatherSlots] = useState<WeatherSlot[]>([])
+  const [scores, setScores] = useState<DepartureScore[]>([])
+  const [best, setBest] = useState<DepartureScore | null>(null)
+  const [priority, setPriority] = useState<Priority>('wind')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [origin, setOrigin] = useState<LatLng | null>(null)
+  const [destination, setDestination] = useState<LatLng | null>(null)
+  const [earliest, setEarliest] = useState<Date | null>(null)
+  const [latest, setLatest] = useState<Date | null>(null)
+  const [sliderTime, setSliderTime] = useState<Date | null>(null)
+  const [mapInstance, setMapInstance] = useState<L.Map | null>(null)
+  const [currentRoute, setCurrentRoute] = useState<Route | null>(null)
+  const [currentSlots, setCurrentSlots] = useState<WeatherSlot[]>([])
+  const [currentEarliest, setCurrentEarliest] = useState<Date | null>(null)
+  const [currentLatest, setCurrentLatest] = useState<Date | null>(null)
+
+  const handlePriorityChange = useCallback((newPriority: Priority) => {
+    setPriority(newPriority)
+    if (!currentRoute || !currentSlots.length || !currentEarliest || !currentLatest) return
+    const arriveBy = new Date(currentLatest.getTime() + (currentRoute.durationMinutes * 60 * 1000))
+    const newScores = scoreDepartures(currentRoute, currentSlots, currentEarliest, arriveBy, newPriority)
+    const newBest = newScores.reduce((b, s) => (s.combinedScore < b.combinedScore ? s : b))
+    setScores(newScores)
+    setBest(newBest)
+  }, [currentRoute, currentSlots, currentEarliest, currentLatest])
+
+  const handleSubmit = useCallback(async (form: RouteFormValues) => {
+    setLoading(true)
+    setError(null)
+    try {
+      const [originLatLng, destLatLng] = await Promise.all([
+        geocode(form.origin),
+        geocode(form.destination),
+      ])
+      setOrigin(originLatLng)
+      setDestination(destLatLng)
+
+      const fetchedRoute = await fetchRoute(originLatLng, destLatLng)
+      setRoute(fetchedRoute)
+      setCurrentRoute(fetchedRoute)
+
+      // Use route midpoint for weather fetch
+      const midIdx = Math.floor(fetchedRoute.polyline.length / 2)
+      const midpoint = fetchedRoute.polyline[midIdx]
+
+      const slots = await fetchWeather(midpoint, form.date, form.date)
+      setWeatherSlots(slots)
+      setCurrentSlots(slots)
+
+      const earliestDate = new Date(`${form.date}T${form.earliestLeaveTime}`)
+      const arriveByDate = new Date(`${form.date}T${form.arriveByTime}`)
+      const latestDate = new Date(arriveByDate.getTime() - fetchedRoute.durationMinutes * 60 * 1000)
+
+      setEarliest(earliestDate)
+      setLatest(latestDate)
+      setCurrentEarliest(earliestDate)
+      setCurrentLatest(latestDate)
+      setSliderTime(earliestDate)
+
+      const newScores = scoreDepartures(fetchedRoute, slots, earliestDate, arriveByDate, priority)
+      const newBest = findBestDeparture(fetchedRoute, slots, earliestDate, arriveByDate, priority)
+      setScores(newScores)
+      setBest(newBest)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Something went wrong')
+    } finally {
+      setLoading(false)
+    }
+  }, [priority])
+
+  return (
+    <div className="h-screen w-screen flex overflow-hidden">
+      {/* Sidebar */}
+      <div className="w-80 flex-shrink-0 flex flex-col gap-3 p-3 overflow-y-auto bg-gray-50 z-10 shadow-lg">
+        <RouteInput onSubmit={handleSubmit} loading={loading} />
+        <PriorityToggle value={priority} onChange={handlePriorityChange} />
+
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded p-3">
+            {error}
+          </div>
+        )}
+
+        {best && scores.length > 0 && route && (
+          <RecommendationPanel
+            scores={scores}
+            best={best}
+            priority={priority}
+            durationMinutes={route.durationMinutes}
+          />
+        )}
+
+        {earliest && latest && sliderTime && (
+          <TimeSlider
+            earliest={earliest}
+            latest={latest}
+            value={sliderTime}
+            onChange={setSliderTime}
+          />
+        )}
+      </div>
+
+      {/* Map */}
+      <div className="flex-1 relative">
+        <MapView
+          route={route}
+          weatherSlots={weatherSlots}
+          sliderTime={sliderTime}
+          origin={origin}
+          destination={destination}
+          onMapReady={setMapInstance}
+        />
+        <WindOverlay map={mapInstance} weatherSlots={weatherSlots} sliderTime={sliderTime} />
+      </div>
+    </div>
+  )
 }
