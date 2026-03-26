@@ -2,8 +2,8 @@ import type { LatLng, Route, RouteSegment } from '../types'
 import { calcBearing } from '../utils/bearing'
 
 const NOMINATIM = 'https://nominatim.openstreetmap.org'
-// routing.openstreetmap.de/routed-bike is a public OSRM instance with the cycling profile
-const OSRM = 'https://routing.openstreetmap.de/routed-bike'
+// Public OSRM demo — driving profile; same road network as cycling for urban routes
+const OSRM = 'https://router.project-osrm.org'
 
 /** Convert address string to lat/lng via Nominatim */
 export async function geocode(address: string): Promise<LatLng> {
